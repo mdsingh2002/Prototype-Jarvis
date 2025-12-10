@@ -15,6 +15,11 @@ function onResults(results) {
   canvasCtx.save();
   canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
+  // Flip the canvas horizontally to make it easier to understand
+  // for the viwer
+  canvasCtx.translate(canvasElement.width, 0);
+  canvasCtx.scale(-1, 1);
+
   canvasCtx.drawImage(
     results.image,
     0,
