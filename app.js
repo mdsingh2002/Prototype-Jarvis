@@ -2,10 +2,16 @@ const videoElement = document.getElementById("video");
 const canvasElement = document.getElementById("canvas");
 const canvasCtx = canvasElement.getContext("2d");
 const statusElement = document.getElementById("status");
+const gestureElement = document.getElementById("gesture");
 
 function updateStatus(message, isActive = false) {
   statusElement.textContent = message;
   statusElement.classList.toggle("active", isActive);
+}
+
+function updateGesture(gesture) {
+  gestureElement.textContent = `Gesture: ${gesture}`;
+  gestureElement.classList.toggle("active", gesture !== "UNKNOWN");
 }
 
 function onResults(results) {
@@ -32,6 +38,10 @@ function onResults(results) {
     updateStatus(`Tracking ${results.multiHandLandmarks.length} hand(s)`, true);
 
     for (const landmarks of results.multiHandLandmarks) {
+      // Detect gesture for the first hand
+      const gesture = detectGesture(landmarks);
+      updateGesture(gesture);
+
       drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {
         color: "#00FF00",
         lineWidth: 5,
@@ -44,6 +54,7 @@ function onResults(results) {
     }
   } else {
     updateStatus("No hands detected", false);
+    updateGesture("NONE");
   }
 
   canvasCtx.restore();
