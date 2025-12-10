@@ -3,4 +3,4 @@
 
 Plans to use OpenCv, numPy and MediaPipe currently
 
-
+Will start with hand tracking and add voice later
