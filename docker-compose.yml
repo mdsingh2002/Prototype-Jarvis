@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  hand-tracker:
+    build: .
+    container_name: hand-tracker
+    ports:
+      - "5555:5555"
+    devices:
+      - /dev/video0:/dev/video0
+    environment:
+      - DISPLAY=${DISPLAY}
+      - MOUSE_SERVER_HOST=host.docker.internal
+      - MOUSE_SERVER_PORT=5555
+    volumes:
+      - ./src:/app/src  # Hot reload during development
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    privileged: true
