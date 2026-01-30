@@ -1,6 +1,1 @@
-- Plans to make hand tracking able to do everything on your browser like a mini jarvis, potentially even let you play a game using it (Use at your own accounts risk!)
-
-
-Plans to use OpenCv, numPy and MediaPipe currently
-
-Will start with hand tracking and add voice later
+Hand tracking mouse control using your webcam. Uses MediaPipe for hand detection, OpenCV for camera capture, and PyAutoGUI for mouse control. Supported gestures: move cursor (index finger), left click (thumb + index pinch), right click (thumb + middle pinch), double click (peace sign), drag mode (hold fist), scroll (thumb + pinky pinch then move index up/down), and pause/resume (hold open palm). Run `pip install -r requirements_local.txt` then `python src/hand_tracker_local.py` to start. Move mouse to screen corner to emergency stop.
