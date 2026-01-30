@@ -47,10 +47,29 @@ class HandTrackerLocal:
         self.last_click_time = 0
         self.click_cooldown = 0.3  # Seconds between clicks
 
+        # Right click detection (thumb + middle finger)
+        self.last_right_click_time = 0
+
+        # Double click detection (peace sign)
+        self.last_double_click_time = 0
+        self.double_click_cooldown = 0.5
+
+        # Drag mode (fist)
+        self.is_dragging = False
+        self.fist_threshold = 0.08  # How close fingertips must be to palm
+
+        # Scroll mode
+        self.scroll_mode = False
+        self.last_scroll_y = None
+        self.scroll_sensitivity = 10
+
         # Tracking state
         self.tracking_paused = False
         self.palm_hold_frames = 0
         self.palm_hold_threshold = 30  # Frames to hold palm for pause toggle
+
+        # Current gesture for display
+        self.current_gesture = "NONE"
 
     def smooth_coordinates(self, x, y):
         """Apply moving average smoothing to reduce jitter."""
@@ -111,11 +130,85 @@ class HandTrackerLocal:
 
         return fingers_extended >= 4
 
+    def detect_fist(self, landmarks):
+        """Detect fist gesture (all fingers curled into palm)."""
+        # Check if all fingertips are below their respective MCP joints (knuckles)
+        finger_tips = [8, 12, 16, 20]  # Index, middle, ring, pinky tips
+        finger_mcps = [5, 9, 13, 17]  # MCP joints (knuckles)
+
+        fingers_curled = 0
+        for tip, mcp in zip(finger_tips, finger_mcps):
+            if landmarks[tip].y > landmarks[mcp].y:
+                fingers_curled += 1
+
+        # Thumb should also be curled (tip close to index base)
+        thumb_tip = landmarks[4]
+        index_mcp = landmarks[5]
+        thumb_curled = self.calculate_distance(thumb_tip, index_mcp) < self.fist_threshold
+
+        return fingers_curled >= 4 and thumb_curled
+
+    def detect_right_click_pinch(self, landmarks):
+        """Detect right click gesture (thumb + middle finger pinch)."""
+        thumb_tip = landmarks[4]
+        middle_tip = landmarks[12]
+
+        distance = self.calculate_distance(thumb_tip, middle_tip)
+        return distance < self.pinch_threshold
+
+    def detect_peace_sign(self, landmarks):
+        """Detect peace sign (index and middle fingers extended, others curled)."""
+        # Index and middle should be extended
+        index_extended = landmarks[8].y < landmarks[6].y
+        middle_extended = landmarks[12].y < landmarks[10].y
+
+        # Ring and pinky should be curled
+        ring_curled = landmarks[16].y > landmarks[14].y
+        pinky_curled = landmarks[20].y > landmarks[18].y
+
+        return index_extended and middle_extended and ring_curled and pinky_curled
+
+    def detect_scroll_gesture(self, landmarks):
+        """Detect scroll gesture (thumb + pinky pinch)."""
+        thumb_tip = landmarks[4]
+        pinky_tip = landmarks[20]
+
+        distance = self.calculate_distance(thumb_tip, pinky_tip)
+        return distance < self.pinch_threshold * 1.5
+
+    def get_finger_states(self, landmarks):
+        """Get which fingers are extended (for debugging/display)."""
+        states = []
+
+        # Thumb (different logic - horizontal check)
+        if landmarks[4].x < landmarks[3].x:
+            states.append("Thumb")
+
+        # Other fingers (vertical check)
+        finger_names = ["Index", "Middle", "Ring", "Pinky"]
+        finger_tips = [8, 12, 16, 20]
+        finger_pips = [6, 10, 14, 18]
+
+        for name, tip, pip in zip(finger_names, finger_tips, finger_pips):
+            if landmarks[tip].y < landmarks[pip].y:
+                states.append(name)
+
+        return states
+
     def process_frame(self, frame):
         """Process a single frame for hand detection."""
         # Convert BGR to RGB for MediaPipe
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb_frame)
+
+        if not results.multi_hand_landmarks:
+            # No hand detected - release drag if active
+            if self.is_dragging:
+                pyautogui.mouseUp(_pause=False)
+                self.is_dragging = False
+                print("Drag ended (hand lost)")
+            self.current_gesture = "NO HAND"
+            self.last_scroll_y = None
 
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
@@ -152,22 +245,82 @@ class HandTrackerLocal:
                     # Apply smoothing
                     smooth_x, smooth_y = self.smooth_coordinates(screen_x, screen_y)
 
-                    # Move mouse
-                    pyautogui.moveTo(smooth_x, smooth_y, _pause=False)
+                    current_time = time.time()
 
-                    # Check for pinch (click)
-                    if self.detect_pinch(landmarks):
-                        current_time = time.time()
+                    # Priority-based gesture detection
+                    # 1. Fist = Drag mode
+                    if self.detect_fist(landmarks):
+                        self.current_gesture = "FIST (DRAG)"
+                        if not self.is_dragging:
+                            pyautogui.mouseDown(_pause=False)
+                            self.is_dragging = True
+                            print("Drag started")
+                        pyautogui.moveTo(smooth_x, smooth_y, _pause=False)
+
+                    # 2. Release drag if fist is released
+                    elif self.is_dragging:
+                        pyautogui.mouseUp(_pause=False)
+                        self.is_dragging = False
+                        self.current_gesture = "NONE"
+                        print("Drag ended")
+
+                    # 3. Scroll gesture (thumb + pinky)
+                    elif self.detect_scroll_gesture(landmarks):
+                        self.current_gesture = "SCROLL"
+                        if self.last_scroll_y is not None:
+                            delta = (self.last_scroll_y - index_tip.y) * self.scroll_sensitivity * 100
+                            if abs(delta) > 1:
+                                pyautogui.scroll(int(delta), _pause=False)
+                        self.last_scroll_y = index_tip.y
+
+                    # 4. Peace sign = Double click
+                    elif self.detect_peace_sign(landmarks):
+                        self.current_gesture = "PEACE (DBL-CLICK)"
+                        if current_time - self.last_double_click_time > self.double_click_cooldown:
+                            pyautogui.doubleClick(_pause=False)
+                            self.last_double_click_time = current_time
+                            print("Double click!")
+                        self.last_scroll_y = None
+
+                    # 5. Right click pinch (thumb + middle)
+                    elif self.detect_right_click_pinch(landmarks):
+                        self.current_gesture = "RIGHT CLICK"
+                        if current_time - self.last_right_click_time > self.click_cooldown:
+                            pyautogui.rightClick(_pause=False)
+                            self.last_right_click_time = current_time
+                            print("Right click!")
+                        self.last_scroll_y = None
+
+                    # 6. Left click pinch (thumb + index)
+                    elif self.detect_pinch(landmarks):
+                        self.current_gesture = "LEFT CLICK"
                         if current_time - self.last_click_time > self.click_cooldown:
                             pyautogui.click(_pause=False)
                             self.last_click_time = current_time
-                            print("Click!")
+                            print("Left click!")
+                        self.last_scroll_y = None
+
+                    # 7. Normal cursor movement
+                    else:
+                        self.current_gesture = "MOVE"
+                        pyautogui.moveTo(smooth_x, smooth_y, _pause=False)
+                        self.last_scroll_y = None
 
         # Draw status on frame
         status_text = "PAUSED" if self.tracking_paused else "TRACKING"
         color = (0, 0, 255) if self.tracking_paused else (0, 255, 0)
         cv2.putText(frame, status_text, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+        # Draw current gesture
+        gesture_color = (255, 255, 0)  # Cyan
+        cv2.putText(frame, f"Gesture: {self.current_gesture}", (10, 70),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, gesture_color, 2)
+
+        # Draw drag indicator
+        if self.is_dragging:
+            cv2.putText(frame, "DRAGGING", (10, 110),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         return frame
 
@@ -190,9 +343,13 @@ class HandTrackerLocal:
         print("=" * 50)
         print("")
         print("Gestures:")
-        print("  - Move index finger to control cursor")
-        print("  - Pinch thumb and index finger to click")
-        print("  - Hold open palm to pause/resume tracking")
+        print("  - Index finger up     -> Move cursor")
+        print("  - Thumb + Index pinch -> Left click")
+        print("  - Thumb + Middle pinch-> Right click")
+        print("  - Peace sign (V)      -> Double click")
+        print("  - Fist (hold)         -> Drag mode")
+        print("  - Thumb + Pinky pinch -> Scroll (move index up/down)")
+        print("  - Open palm (hold)    -> Pause/resume tracking")
         print("")
         print("Press 'q' in the camera window to quit")
         print("Move mouse to corner of screen to emergency stop (failsafe)")
